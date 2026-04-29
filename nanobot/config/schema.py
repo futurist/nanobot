@@ -302,7 +302,8 @@ class Config(BaseSettings):
         """Match provider config and its registry name. Returns (config, spec_name)."""
         from nanobot.providers.registry import PROVIDERS, find_by_name
 
-        forced = self.resolve_preset().provider
+        resolved = self.resolve_preset()
+        forced = resolved.provider
         if forced != "auto":
             spec = find_by_name(forced)
             if spec:
@@ -310,7 +311,7 @@ class Config(BaseSettings):
                 return (p, spec.name) if p else (None, None)
             return None, None
 
-        model_lower = (model or self.resolve_preset().model).lower()
+        model_lower = (model or resolved.model).lower()
         model_normalized = model_lower.replace("-", "_")
         model_prefix = model_lower.split("/", 1)[0] if "/" in model_lower else ""
         normalized_prefix = model_prefix.replace("-", "_")

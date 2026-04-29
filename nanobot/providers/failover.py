@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
@@ -12,68 +11,18 @@ from loguru import logger
 from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
 
 
-@dataclass(frozen=True)
-class ModelCandidate:
-    """A lazily resolved model/provider candidate."""
-
-    label: str
-    resolver: Callable[[], tuple[LLMProvider, str]]
-
-
 class ModelRouter(LLMProvider):
     """Try fallback model candidates for eligible transient final errors."""
 
     supports_progress_deltas = False
-
-    _BLOCKED_STATUS_CODES = frozenset({400, 401, 403, 404, 422})
-    _QUOTA_MARKERS = (
-        "insufficient_quota",
-        "insufficient quota",
-        "quota exceeded",
-        "quota_exceeded",
-        "quota exhausted",
-        "quota_exhausted",
-        "billing hard limit",
-        "billing_hard_limit_reached",
-        "billing not active",
-        "insufficient balance",
-        "insufficient_balance",
-        "credit balance too low",
-        "payment required",
-        "out of credits",
-        "out of quota",
-        "exceeded your current quota",
-    )
-    _NON_FAILOVER_MARKERS = (
-        "context length",
-        "context_length",
-        "maximum context",
-        "max context",
-        "token budget",
-        "too many tokens",
-        "schema",
-        "invalid request",
-        "invalid_request",
-        "invalid parameter",
-        "invalid_parameter",
-        "unsupported",
-        "unauthorized",
-        "authentication",
-        "permission",
-        "forbidden",
-        "refusal",
-        "content policy",
-        "content_filter",
-        "policy violation",
-        "safety",
-    )
 
     def __init__(
         self,
         *,
         primary_provider: LLMProvider,
         primary_model: str,
-        fallback_candidates: list[ModelCandidate],
+        fallback_models: list[str],
+        provider_factory: Callable[[str], LLMProvider] | None = None,
         per_candidate_timeout_s: float | None = None,
     ) -> None:
         super().__init__(
@@ -82,7 +31,9 @@ class ModelRouter(LLMProvider):
         )
         self.primary_provider = primary_provider
         self.primary_model = primary_model
-        self.fallback_candidates = list(fallback_candidates)
+        self.fallback_models = list(fallback_models)
+        self._provider_factory = provider_factory
+        self._provider_cache: dict[str, LLMProvider] = {}
         self.per_candidate_timeout_s = per_candidate_timeout_s
         self.generation = getattr(primary_provider, "generation", GenerationSettings())
 
@@ -96,35 +47,23 @@ class ModelRouter(LLMProvider):
         return await self.primary_provider.chat_stream(**kwargs)
 
     @classmethod
-    def _is_quota_error(cls, response: LLMResponse) -> bool:
-        tokens = {
-            cls._normalize_error_token(response.error_type),
-            cls._normalize_error_token(response.error_code),
-        }
-        if any(token in cls._NON_RETRYABLE_429_ERROR_TOKENS for token in tokens if token):
-            return True
-        content = (response.content or "").lower()
-        return any(marker in content for marker in cls._QUOTA_MARKERS)
-
-    @classmethod
-    def _is_blocked_error(cls, response: LLMResponse) -> bool:
-        status = response.error_status_code
-        if status is not None and int(status) in cls._BLOCKED_STATUS_CODES:
-            return True
-        if response.finish_reason in {"refusal", "content_filter"}:
-            return True
-        content = (response.content or "").lower()
-        return any(marker in content for marker in cls._NON_FAILOVER_MARKERS)
-
-    @classmethod
     def _should_failover(cls, response: LLMResponse) -> bool:
-        if response.finish_reason != "error":
-            return False
-        if cls._is_blocked_error(response):
-            return False
-        if cls._is_quota_error(response):
-            return False
-        return cls._is_transient_response(response)
+        return response.finish_reason == "error" and cls._is_transient_response(response)
+
+    def _resolve(self, model: str) -> tuple[LLMProvider, str]:
+        """Return (provider, actual_model_name) for a model string.
+
+        Caches results so factory is only invoked once per unique model.
+        Without a factory the primary provider is reused with the raw model string.
+        """
+        if model in self._provider_cache:
+            p = self._provider_cache[model]
+            return p, p.get_default_model()
+        if self._provider_factory:
+            provider = self._provider_factory(model)
+            self._provider_cache[model] = provider
+            return provider, provider.get_default_model()
+        return self.primary_provider, model
 
     async def _with_timeout(self, coro: Awaitable[LLMResponse]) -> LLMResponse:
         timeout_s = self.per_candidate_timeout_s
@@ -140,23 +79,14 @@ class ModelRouter(LLMProvider):
             )
 
     @staticmethod
-    def _resolver_error(candidate: ModelCandidate, exc: Exception) -> LLMResponse:
-        logger.warning("Failed to resolve fallback model {}: {}", candidate.label, exc)
+    def _resolver_error(label: str, exc: Exception) -> LLMResponse:
+        logger.warning("Failed to resolve fallback model {}: {}", label, exc)
         return LLMResponse(
-            content=f"Error configuring fallback model {candidate.label}: {exc}",
+            content=f"Error configuring fallback model {label}: {exc}",
             finish_reason="error",
             error_kind="configuration",
             error_should_retry=False,
         )
-
-    def _candidate_chain(self) -> list[ModelCandidate]:
-        return [
-            ModelCandidate(
-                label=self.primary_model,
-                resolver=lambda: (self.primary_provider, self.primary_model),
-            ),
-            *self.fallback_candidates,
-        ]
 
     async def _route(
         self,
@@ -164,36 +94,49 @@ class ModelRouter(LLMProvider):
         *,
         on_content_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> LLMResponse:
+        """Try primary then each fallback candidate, lazily resolving providers."""
         last_response: LLMResponse | None = None
-        chain = self._candidate_chain()
-        for index, candidate in enumerate(chain):
+        candidates: list[tuple[str, LLMProvider, str]] = [
+            (self.primary_model, self.primary_provider, self.primary_model)
+        ]
+
+        index = 0
+        while index < len(candidates):
+            label, provider, model = candidates[index]
             try:
-                provider, model = candidate.resolver()
+                response = await self._with_timeout(call(provider, model, on_content_delta))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                response = self._resolver_error(candidate, exc)
-            else:
-                response = await self._with_timeout(call(provider, model, on_content_delta))
+                response = self._resolver_error(label, exc)
 
             if response.finish_reason != "error":
                 if index > 0:
-                    logger.info("LLM failover selected model={}", candidate.label)
+                    logger.info("LLM failover selected model={}", label)
                 return response
 
             last_response = response
             if not self._should_failover(response):
                 return response
-            if index + 1 >= len(chain):
-                logger.warning("LLM failover exhausted after model={}", candidate.label)
+
+            # Lazily append the next fallback candidate only when needed
+            fb_index = index  # 0 is primary, so fb-1 is at index 1
+            if fb_index < len(self.fallback_models):
+                fb_model = self.fallback_models[fb_index]
+                fb_provider, fb_resolved = self._resolve(fb_model)
+                candidates.append((fb_model, fb_provider, fb_resolved))
+                logger.warning(
+                    "LLM failover model={} next_model={} status={} kind={}",
+                    label,
+                    fb_model,
+                    response.error_status_code,
+                    response.error_kind or response.error_type or response.error_code or "unknown",
+                )
+            else:
+                logger.warning("LLM failover exhausted after model={}", label)
                 return response
-            logger.warning(
-                "LLM failover model={} next_model={} status={} kind={}",
-                candidate.label,
-                chain[index + 1].label,
-                response.error_status_code,
-                response.error_kind or response.error_type or response.error_code or "unknown",
-            )
+
+            index += 1
 
         return last_response or LLMResponse(
             content="No available fallback model candidate.",

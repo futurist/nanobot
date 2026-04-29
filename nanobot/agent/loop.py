@@ -41,7 +41,7 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.config.schema import AgentDefaults, ModelPresetConfig
-from nanobot.providers.base import LLMProvider
+from nanobot.providers.base import GenerationSettings, LLMProvider
 from nanobot.providers.factory import ProviderSnapshot
 from nanobot.session.manager import Session, SessionManager
 from nanobot.utils.document import extract_documents
@@ -251,7 +251,11 @@ class AgentLoop:
         self.context = ContextBuilder(workspace, timezone=timezone, disabled_skills=disabled_skills)
         self.sessions = session_manager or SessionManager(workspace)
         self.tools = ToolRegistry()
-        self.runner = AgentRunner(provider, provider_factory=provider_factory)
+        self.runner = AgentRunner(
+            provider,
+            provider_factory=provider_factory,
+            fallback_models=fallback_models,
+        )
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -357,8 +361,6 @@ class AgentLoop:
     @model_preset.setter
     def model_preset(self, name: str | None) -> None:
         """Resolve a preset by name and apply all fields atomically."""
-        from nanobot.providers.base import GenerationSettings
-
         if not isinstance(name, str) or not name.strip():
             raise ValueError("model_preset must be a non-empty string")
         if name not in self.model_presets:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from nanobot.config.schema import Config
 from nanobot.providers.base import GenerationSettings, LLMProvider
@@ -18,9 +19,30 @@ class ProviderSnapshot:
     signature: tuple[object, ...]
 
 
-def make_provider(config: Config) -> LLMProvider:
-    """Create the LLM provider implied by config."""
-    model = config.agents.defaults.model
+def build_provider_for_model(
+    config: Config,
+    model: str,
+    *,
+    gen_src: Any | None = None,
+) -> LLMProvider:
+    """Create an LLM provider for a specific *model* string.
+
+    *gen_src* provides generation settings (temperature, max_tokens,
+    reasoning_effort). When omitted, ``config.resolve_preset()`` is used.
+    """
+    from nanobot.config.schema import ModelPresetConfig
+
+    if gen_src is None:
+        gen_src = config.resolve_preset()
+    elif not isinstance(gen_src, ModelPresetConfig):
+        # Accept a plain object with the three generation attributes
+        gen_src = ModelPresetConfig(
+            model=model,
+            temperature=getattr(gen_src, "temperature", None),
+            max_tokens=getattr(gen_src, "max_tokens", None),
+            reasoning_effort=getattr(gen_src, "reasoning_effort", None),
+        )
+
     provider_name = config.get_provider_name(model)
     p = config.get_provider(model)
     spec = find_by_name(provider_name) if provider_name else None
@@ -39,18 +61,16 @@ def make_provider(config: Config) -> LLMProvider:
         from nanobot.providers.openai_codex_provider import OpenAICodexProvider
 
         provider = OpenAICodexProvider(default_model=model)
-    elif backend == "azure_openai":
-        from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
-
-        provider = AzureOpenAIProvider(
-            api_key=p.api_key,
-            api_base=p.api_base,
-            default_model=model,
-        )
     elif backend == "github_copilot":
         from nanobot.providers.github_copilot_provider import GitHubCopilotProvider
 
         provider = GitHubCopilotProvider(default_model=model)
+    elif backend == "azure_openai":
+        from nanobot.providers.azure_openai_provider import AzureOpenAIProvider
+
+        provider = AzureOpenAIProvider(
+            api_key=p.api_key, api_base=p.api_base, default_model=model
+        )
     elif backend == "anthropic":
         from nanobot.providers.anthropic_provider import AnthropicProvider
 
@@ -72,13 +92,40 @@ def make_provider(config: Config) -> LLMProvider:
             extra_body=p.extra_body if p else None,
         )
 
-    defaults = config.agents.defaults
     provider.generation = GenerationSettings(
-        temperature=defaults.temperature,
-        max_tokens=defaults.max_tokens,
-        reasoning_effort=defaults.reasoning_effort,
+        temperature=gen_src.temperature,
+        max_tokens=gen_src.max_tokens,
+        reasoning_effort=gen_src.reasoning_effort,
     )
     return provider
+
+
+def make_provider(config: Config) -> LLMProvider:
+    """Create the LLM provider implied by config (legacy entrypoint)."""
+    resolved = config.resolve_preset()
+    return build_provider_for_model(config, resolved.model, gen_src=resolved)
+
+
+def make_provider_factory(config: Config):
+    """Build a cached factory that creates providers for arbitrary model strings.
+
+    If a model string matches a preset name in ``config.model_presets``, the
+    preset's full config is used.
+    """
+    cache: dict[str, LLMProvider] = {}
+    presets = getattr(config, "model_presets", {}) or {}
+
+    def factory(model_or_preset: str) -> LLMProvider:
+        preset = presets.get(model_or_preset)
+        actual_model = preset.model if preset else model_or_preset
+        key = actual_model
+        if key not in cache:
+            cache[key] = build_provider_for_model(
+                config, actual_model, gen_src=preset
+            )
+        return cache[key]
+
+    return factory
 
 
 def provider_signature(config: Config) -> tuple[object, ...]:
@@ -99,10 +146,11 @@ def provider_signature(config: Config) -> tuple[object, ...]:
 
 
 def build_provider_snapshot(config: Config) -> ProviderSnapshot:
+    resolved = config.resolve_preset()
     return ProviderSnapshot(
         provider=make_provider(config),
-        model=config.agents.defaults.model,
-        context_window_tokens=config.agents.defaults.context_window_tokens,
+        model=resolved.model,
+        context_window_tokens=resolved.context_window_tokens,
         signature=provider_signature(config),
     )
 
