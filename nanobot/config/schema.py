@@ -304,8 +304,24 @@ class Config(BaseSettings):
         return self
 
     def resolve_preset(self) -> ModelPresetConfig:
-        """Return the active preset (never falls back to manual field construction)."""
-        return self.model_presets[self.agents.defaults.model_preset]
+        """Return the active preset.
+
+        The implicit ``"default"`` preset is rebuilt from current defaults every
+        time so that runtime mutations (e.g. tests setting ``defaults.model``)
+        are always reflected.
+        """
+        name = self.agents.defaults.model_preset
+        if name == "default":
+            d = self.agents.defaults
+            return ModelPresetConfig(
+                model=d.model,
+                provider=d.provider,
+                max_tokens=d.max_tokens,
+                context_window_tokens=d.context_window_tokens,
+                temperature=d.temperature,
+                reasoning_effort=d.reasoning_effort,
+            )
+        return self.model_presets[name]
 
     @property
     def workspace_path(self) -> Path:
