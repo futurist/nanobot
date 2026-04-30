@@ -4,27 +4,22 @@ These tests focus on the business logic behind the onboard wizard,
 without testing the interactive UI components.
 """
 
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
-import pytest
 from pydantic import BaseModel, Field
 
 from nanobot.cli import onboard as onboard_wizard
-
-# Import functions to test
 from nanobot.cli.commands import _merge_missing_defaults
 from nanobot.cli.onboard import (
     _BACK_PRESSED,
     _configure_pydantic_model,
     _format_value,
+    _get_constraint_hint,
     _get_field_display_name,
     _get_field_type_info,
-    _get_constraint_hint,
     _input_text,
-    _validate_field_constraint,
     run_onboard,
 )
 from nanobot.config.schema import Config
@@ -640,8 +635,8 @@ class TestValidateFieldConstraint:
 
     def test_real_send_max_retries_field(self):
         """Validate against the actual ChannelsConfig.send_max_retries field."""
-        from nanobot.config.schema import ChannelsConfig
         from nanobot.cli.onboard import _validate_field_constraint
+        from nanobot.config.schema import ChannelsConfig
 
         field_info = ChannelsConfig.model_fields["send_max_retries"]
         assert _validate_field_constraint(3, field_info) is None
@@ -833,12 +828,11 @@ class TestMainMenuUpdate:
 
     def test_main_menu_dispatch_includes_channel_common(self):
         """Main menu dispatch should route [H] to Channel Common."""
-        from nanobot.cli.onboard import run_onboard
 
         # We verify by checking the dispatch table is set up correctly
         # The menu items are defined inline in run_onboard, so we test
         # that _configure_general_settings handles the new sections.
-        from nanobot.cli.onboard import _SETTINGS_SECTIONS, _SETTINGS_GETTER, _SETTINGS_SETTER
+        from nanobot.cli.onboard import _SETTINGS_GETTER, _SETTINGS_SECTIONS, _SETTINGS_SETTER
 
         assert "Channel Common" in _SETTINGS_SECTIONS
         assert "Channel Common" in _SETTINGS_GETTER
@@ -846,7 +840,7 @@ class TestMainMenuUpdate:
 
     def test_main_menu_dispatch_includes_api_server(self):
         """Main menu dispatch should route [I] to API Server."""
-        from nanobot.cli.onboard import _SETTINGS_SECTIONS, _SETTINGS_GETTER, _SETTINGS_SETTER
+        from nanobot.cli.onboard import _SETTINGS_GETTER, _SETTINGS_SECTIONS, _SETTINGS_SETTER
 
         assert "API Server" in _SETTINGS_SECTIONS
         assert "API Server" in _SETTINGS_GETTER
@@ -967,7 +961,7 @@ class TestModelPresetWizard:
 
     def test_sync_preset_cache(self):
         """_sync_preset_cache should populate the module-level cache."""
-        from nanobot.cli.onboard import _sync_preset_cache, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _sync_preset_cache
         from nanobot.config.schema import ModelPresetConfig
 
         config = Config()
@@ -980,7 +974,7 @@ class TestModelPresetWizard:
 
     def test_model_preset_add(self, monkeypatch):
         """_configure_model_presets should add a new preset."""
-        from nanobot.cli.onboard import _configure_model_presets, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _configure_model_presets
         from nanobot.config.schema import ModelPresetConfig
 
         config = Config()
@@ -1027,7 +1021,7 @@ class TestModelPresetWizard:
 
     def test_model_preset_delete(self, monkeypatch):
         """_configure_model_presets should delete an existing preset."""
-        from nanobot.cli.onboard import _configure_model_presets, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _configure_model_presets
         from nanobot.config.schema import ModelPresetConfig
 
         config = Config()
@@ -1071,7 +1065,7 @@ class TestModelPresetWizard:
 
     def test_model_preset_field_handler(self, monkeypatch):
         """_handle_model_preset_field should set a preset name from choices."""
-        from nanobot.cli.onboard import _handle_model_preset_field, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_model_preset_field
         from nanobot.config.schema import AgentDefaults
 
         _MODEL_PRESET_CACHE.clear()
@@ -1085,7 +1079,7 @@ class TestModelPresetWizard:
 
     def test_model_preset_field_handler_clear(self, monkeypatch):
         """_handle_model_preset_field should clear preset when (clear/unset) chosen."""
-        from nanobot.cli.onboard import _handle_model_preset_field, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_model_preset_field
         from nanobot.config.schema import AgentDefaults
 
         _MODEL_PRESET_CACHE.clear()
@@ -1183,7 +1177,7 @@ class TestModelPresetWizard:
 
     def test_provider_field_handler_back_pressed(self, monkeypatch):
         """_handle_provider_field should not modify value when back is pressed."""
-        from nanobot.cli.onboard import _handle_provider_field, _BACK_PRESSED
+        from nanobot.cli.onboard import _BACK_PRESSED, _handle_provider_field
         from nanobot.config.schema import ModelPresetConfig
 
         monkeypatch.setattr(
@@ -1197,7 +1191,7 @@ class TestModelPresetWizard:
 
     def test_fallback_models_add_preset_and_done(self, monkeypatch):
         """_handle_fallback_models_field should add a preset and save on Done."""
-        from nanobot.cli.onboard import _handle_fallback_models_field, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_fallback_models_field
         from nanobot.config.schema import AgentDefaults
 
         _MODEL_PRESET_CACHE.clear()
@@ -1226,7 +1220,7 @@ class TestModelPresetWizard:
 
     def test_fallback_models_back_preserves_existing(self, monkeypatch):
         """_handle_fallback_models_field should not modify value on Back."""
-        from nanobot.cli.onboard import _handle_fallback_models_field, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_fallback_models_field
         from nanobot.config.schema import AgentDefaults
 
         _MODEL_PRESET_CACHE.clear()
@@ -1252,7 +1246,7 @@ class TestModelPresetWizard:
 
     def test_fallback_models_remove_last(self, monkeypatch):
         """_handle_fallback_models_field should remove last item."""
-        from nanobot.cli.onboard import _handle_fallback_models_field, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_fallback_models_field
         from nanobot.config.schema import AgentDefaults
 
         _MODEL_PRESET_CACHE.clear()
@@ -1279,7 +1273,7 @@ class TestModelPresetWizard:
 
     def test_fallback_models_add_custom_model(self, monkeypatch):
         """_handle_fallback_models_field should add a custom model name."""
-        from nanobot.cli.onboard import _handle_fallback_models_field, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_fallback_models_field
         from nanobot.config.schema import AgentDefaults
 
         _MODEL_PRESET_CACHE.clear()
@@ -1307,7 +1301,7 @@ class TestModelPresetWizard:
 
     def test_fallback_models_no_presets_shows_warning(self, monkeypatch):
         """_handle_fallback_models_field should warn when no presets exist."""
-        from nanobot.cli.onboard import _handle_fallback_models_field, _MODEL_PRESET_CACHE
+        from nanobot.cli.onboard import _MODEL_PRESET_CACHE, _handle_fallback_models_field
         from nanobot.config.schema import AgentDefaults
 
         _MODEL_PRESET_CACHE.clear()

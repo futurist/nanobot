@@ -390,9 +390,6 @@ class MyTool(Tool):
 
         # --- existing restricted key logic ---
         old = getattr(self._loop, key)
-        # When model is set directly, it no longer matches any preset
-        if key == "model":
-            self._loop._active_preset = None
         if "min" in spec and value < spec["min"]:
             return f"Error: '{key}' must be >= {spec['min']}"
         if "max" in spec and value > spec["max"]:
@@ -418,6 +415,9 @@ class MyTool(Tool):
                         f"REJECTED type mismatch {key}: expects {old_t.__name__}, got {new_t.__name__}",
                     )
                     return f"Error: '{key}' expects {old_t.__name__}, got {new_t.__name__}"
+            # When model is set directly, it no longer matches any preset
+            if key == "model":
+                self._loop._active_preset = None
             try:
                 setattr(self._loop, key, value)
             except (ValueError, KeyError) as e:

@@ -8,17 +8,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
-from nanobot.agent.runner import AgentRunner, AgentRunSpec
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.config.schema import Config, ModelPresetConfig
 from nanobot.nanobot import Nanobot
-from nanobot.providers.base import GenerationSettings, LLMProvider
+from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse
 from nanobot.providers.failover import ModelRouter
+from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 
 try:
     from aiohttp import web
@@ -58,7 +55,6 @@ def _write_config(tmp_path: Path, **overrides) -> Path:
 
 
 def _transient_503(content: str = "overloaded") -> LLMResponse:
-    from nanobot.providers.base import LLMResponse
     return LLMResponse(
         content=content,
         finish_reason="error",
@@ -68,7 +64,6 @@ def _transient_503(content: str = "overloaded") -> LLMResponse:
 
 
 def _blocked_401(content: str = "invalid api key") -> LLMResponse:
-    from nanobot.providers.base import LLMResponse
     return LLMResponse(
         content=content,
         finish_reason="error",
@@ -78,7 +73,6 @@ def _blocked_401(content: str = "invalid api key") -> LLMResponse:
 
 
 def _quota_429(content: str = "insufficient quota") -> LLMResponse:
-    from nanobot.providers.base import LLMResponse
     return LLMResponse(
         content=content,
         finish_reason="error",
@@ -88,7 +82,6 @@ def _quota_429(content: str = "insufficient quota") -> LLMResponse:
 
 
 def _success(content: str) -> LLMResponse:
-    from nanobot.providers.base import LLMResponse
     return LLMResponse(content=content, tool_calls=[], usage={})
 
 
@@ -210,7 +203,6 @@ async def test_preset_model_with_fallback_models_in_config(tmp_path: Path) -> No
 
     loop = bot._loop
     assert loop.model == "gpt-4.1"
-    from nanobot.providers.failover import ModelRouter
     assert isinstance(loop.provider, ModelRouter)
     assert loop.provider.fallback_models == ["fallback-model"]
 
@@ -244,8 +236,6 @@ async def test_preset_generation_params_reach_http_request() -> None:
     server = TestServer(app)
     await server.start_server()
     try:
-        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-
         base_url = str(server.make_url("/"))
         provider = OpenAICompatProvider(
             api_key="test",
@@ -303,8 +293,6 @@ async def test_failover_sends_second_request_to_fallback_model() -> None:
     server = TestServer(app)
     await server.start_server()
     try:
-        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-
         base_url = str(server.make_url("/"))
         primary = OpenAICompatProvider(
             api_key="test", api_base=base_url, default_model="primary-model"
@@ -364,8 +352,6 @@ async def test_failover_on_quota_429() -> None:
     server = TestServer(app)
     await server.start_server()
     try:
-        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-
         base_url = str(server.make_url("/"))
         primary = OpenAICompatProvider(
             api_key="test", api_base=base_url, default_model="primary-model"
@@ -431,9 +417,6 @@ async def test_model_router_failover_integration() -> None:
     server = TestServer(app)
     await server.start_server()
     try:
-        from nanobot.providers.openai_compat_provider import OpenAICompatProvider
-        from nanobot.providers.failover import ModelRouter
-
         base_url = str(server.make_url("/"))
         primary = OpenAICompatProvider(
             api_key="test", api_base=base_url, default_model="primary-model"

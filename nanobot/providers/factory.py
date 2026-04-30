@@ -34,14 +34,6 @@ def build_provider_for_model(
 
     if gen_src is None:
         gen_src = config.resolve_preset()
-    elif not isinstance(gen_src, ModelPresetConfig):
-        # Accept a plain object with the three generation attributes
-        gen_src = ModelPresetConfig(
-            model=model,
-            temperature=getattr(gen_src, "temperature", None),
-            max_tokens=getattr(gen_src, "max_tokens", None),
-            reasoning_effort=getattr(gen_src, "reasoning_effort", None),
-        )
 
     # When a preset explicitly specifies a provider, use it directly instead of
     # inferring from config.defaults (which may point to a different active preset).

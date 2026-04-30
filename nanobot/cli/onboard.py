@@ -195,13 +195,13 @@ def _get_field_type_info(field_info) -> FieldTypeInfo:
             origin = get_origin(annotation)
             args = get_args(annotation)
 
-    _SIMPLE_TYPES: dict[type, str] = {bool: "bool", int: "int", float: "float"}
+    _simple_types: dict[type, str] = {bool: "bool", int: "int", float: "float"}
 
     if origin is list or (hasattr(origin, "__name__") and origin.__name__ == "List"):
         return FieldTypeInfo("list", args[0] if args else str)
     if origin is dict or (hasattr(origin, "__name__") and origin.__name__ == "Dict"):
         return FieldTypeInfo("dict", None)
-    for py_type, name in _SIMPLE_TYPES.items():
+    for py_type, name in _simple_types.items():
         if annotation is py_type:
             return FieldTypeInfo(name, None)
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
@@ -407,7 +407,7 @@ def _input_text(display_name: str, current: Any, field_type: str, field_info=Non
 
     value = _get_questionary().text(f"{display_name}:", default=default).ask()
 
-    if value is None:
+    if value is None or value == "":
         return None
 
     if field_type == "int":
@@ -1352,7 +1352,7 @@ def run_onboard(initial_config: Config | None = None) -> OnboardResult:
                 return OnboardResult(config=original_config, should_save=False)
             continue
 
-        _MENU_DISPATCH = {
+        _menu_dispatch = {
             "[P] LLM Provider": lambda: _configure_providers(config),
             "[M] Model Presets": lambda: _configure_model_presets(config),
             "[C] Chat Channel": lambda: _configure_channels(config),
@@ -1369,7 +1369,7 @@ def run_onboard(initial_config: Config | None = None) -> OnboardResult:
         if answer == "[X] Exit Without Saving":
             return OnboardResult(config=original_config, should_save=False)
 
-        action_fn = _MENU_DISPATCH.get(answer)
+        action_fn = _menu_dispatch.get(answer)
         if action_fn:
             last_main_choice = answer
             action_fn()
